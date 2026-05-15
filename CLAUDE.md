@@ -52,6 +52,19 @@ docs/                        # architecture.md, security.md
 - The Makefile builds a **universal binary** (arm64 + x86_64) via `lipo` so one DMG works on both Apple Silicon and Intel Macs.
 - Cross-compiling from arm64 to amd64 needs `CGO_ENABLED=1` + `CC="clang -arch x86_64"` because `fyne.io/systray` uses CGo on macOS.
 
+## Release flow
+
+```
+make tag VERSION=x.y.z     # tags and pushes → triggers .github/workflows/release.yml
+```
+
+The release workflow:
+1. Builds universal DMG
+2. Attaches `Clipbridge-vX.Y.Z.dmg` to a new GitHub Release
+3. If `TAP_PAT` secret is set: regenerates `Casks/clipbridge.rb` in `sven-s/homebrew-tap` from the local `homebrew/clipbridge.rb` template (just substitutes `version` and `sha256`) and pushes it
+
+`TAP_PAT` = a fine-grained Personal Access Token with `Contents: write` on `sven-s/homebrew-tap`. Without it, the tap update step warns and exits 0.
+
 ## Constraints worth remembering before changing things
 
 - **Corporate proxies (Zscaler, etc.)** — buffer entire downloads and "scan-then-burst." `0 B/s` is normal for minutes. The UI explicitly warns users about this.

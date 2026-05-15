@@ -33,6 +33,39 @@ jobs:
           body: |
             ## Install
 
-            Download `Clipbridge-${{ github.ref_name }}.dmg`, open it, drag **Clipbridge** to **Applications**.
+            ```bash
+            brew install --cask sven-s/tap/clipbridge
+            ```
+
+            Or download `Clipbridge-${{ github.ref_name }}.dmg` below and drag **Clipbridge.app** to **Applications**.
 
             > **Note:** The .dmg is **not code-signed**. On first launch, right-click the app → **Open** to bypass Gatekeeper. macOS will remember the choice afterward.
+
+      - name: update Homebrew tap
+        env:
+          TAP_PAT: ${{ secrets.TAP_PAT }}
+        run: |
+          if [ -z "$TAP_PAT" ]; then
+            echo "::warning::TAP_PAT secret not set — skipping Homebrew tap update."
+            echo "To enable: create a fine-grained PAT with Contents:write on sven-s/homebrew-tap,"
+            echo "then add it as a secret named TAP_PAT in this repo's settings."
+            exit 0
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="build/Clipbridge-${GITHUB_REF_NAME}.dmg"
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+
+          git clone "https://x-access-token:${TAP_PAT}@github.com/sven-s/homebrew-tap.git" /tmp/tap
+
+          sed -e "s|version \".*\"|version \"${VERSION}\"|" \
+              -e "s|sha256 \".*\"|sha256 \"${SHA}\"|" \
+              homebrew/clipbridge.rb > /tmp/tap/Casks/clipbridge.rb
+
+          cd /tmp/tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/clipbridge.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "Update clipbridge to v${VERSION}"
+          git push
