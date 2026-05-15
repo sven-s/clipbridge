@@ -62,7 +62,7 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 
 ### Prerequisites
 
-- macOS 10.13+
+- macOS 10.13+ (Universal binary — runs natively on both **Apple Silicon** and **Intel** Macs)
 - A [Tailscale](https://tailscale.com) account with **Funnel enabled** in the admin console
 - The Tailscale CLI installed and logged in on your Mac
 

@@ -28,7 +28,11 @@ build: $(BINARY)
 
 $(BINARY): $(shell find src -name '*.go')
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags="-s -w" -o $(BINARY) ./src/cmd/mac/
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="clang -arch arm64"  go build -ldflags="-s -w" -o $(BUILD_DIR)/clipbridge-arm64 ./src/cmd/mac/
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="clang -arch x86_64" go build -ldflags="-s -w" -o $(BUILD_DIR)/clipbridge-amd64 ./src/cmd/mac/
+	lipo -create -output $(BINARY) $(BUILD_DIR)/clipbridge-arm64 $(BUILD_DIR)/clipbridge-amd64
+	@rm -f $(BUILD_DIR)/clipbridge-arm64 $(BUILD_DIR)/clipbridge-amd64
+	@file $(BINARY)
 
 run: build
 	$(BINARY)

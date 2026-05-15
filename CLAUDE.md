@@ -47,6 +47,11 @@ docs/                        # architecture.md, security.md
 - Menu bar machine slots are pre-allocated (5 max). `fyne.io/systray` can't remove items, only show/hide.
 - Sorting: `GetMachines()` returns alphabetical order — map iteration would otherwise flip the menu around on every poll.
 
+## Build details
+
+- The Makefile builds a **universal binary** (arm64 + x86_64) via `lipo` so one DMG works on both Apple Silicon and Intel Macs.
+- Cross-compiling from arm64 to amd64 needs `CGO_ENABLED=1` + `CC="clang -arch x86_64"` because `fyne.io/systray` uses CGo on macOS.
+
 ## Constraints worth remembering before changing things
 
 - **Corporate proxies (Zscaler, etc.)** — buffer entire downloads and "scan-then-burst." `0 B/s` is normal for minutes. The UI explicitly warns users about this.
