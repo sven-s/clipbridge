@@ -6,9 +6,20 @@ DMG         = $(BUILD_DIR)/$(APP_NAME).dmg
 ICON_PNG    = assets/icon.png
 ICON_ICNS   = assets/icon.icns
 
-.PHONY: all build app dmg run clean deps icon
+.PHONY: all build app dmg run clean deps icon cask-sha tag
 
 all: dmg
+
+# Print SHA256 of the built DMG — paste into homebrew-tap's Casks/clipbridge.rb
+cask-sha: $(DMG)
+	@shasum -a 256 $(DMG) | awk '{print $$1}'
+
+# Cut a release: `make tag VERSION=0.1.0`
+tag:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make tag VERSION=0.1.0"; exit 1; fi
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
+	@echo "→ Release workflow will build and publish v$(VERSION)"
 
 deps:
 	go mod tidy

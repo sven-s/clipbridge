@@ -68,12 +68,23 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 
 ### Install
 
+**Homebrew (recommended):**
+
+```bash
+brew install --cask sven-s/tap/clipbridge
+```
+
+**Manual:**
+
 1. Download the latest `Clipbridge-*.dmg` from the [Releases](https://github.com/sven-s/clipbridge/releases/latest) page (or build it yourself — see below)
 2. Open the DMG, drag **Clipbridge.app** to **Applications**
 3. The .dmg is **not code-signed** — on first launch right-click → **Open** to bypass Gatekeeper. macOS remembers your choice afterward.
-4. Launch Clipbridge from Applications — a blue dot appears in your menu bar
-5. The app automatically runs `tailscale funnel --bg 8457` and detects your tailnet hostname
-6. Click the menu bar icon → **Copy UI URL**
+
+**Then:**
+
+1. Launch Clipbridge from Applications — a blue dot appears in your menu bar
+2. The app automatically runs `tailscale funnel --bg 8457` and detects your tailnet hostname
+3. Click the menu bar icon → **Copy UI URL**
 
 ### On every Windows machine
 
