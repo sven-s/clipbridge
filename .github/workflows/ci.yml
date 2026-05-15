@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build binary
+        run: make build
+
+      - name: build .app bundle
+        run: make app
+
+      - name: smoke-test bundle structure
+        run: |
+          test -x build/Clipbridge.app/Contents/MacOS/Clipbridge
+          test -f build/Clipbridge.app/Contents/Info.plist
+          test -f build/Clipbridge.app/Contents/Resources/AppIcon.icns

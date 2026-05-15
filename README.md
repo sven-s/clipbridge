@@ -1,5 +1,9 @@
 # Clipbridge
 
+[![CI](https://github.com/sven-s/clipbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/sven-s/clipbridge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sven-s/clipbridge?include_prereleases&sort=semver)](https://github.com/sven-s/clipbridge/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > Cross-machine clipboard relay for when your corporate RDP won't let you copy-paste.
 
 You work on a Mac. You RDP into a customer's Windows machine through Horizon, AnyDesk, Jump Desktop, or similar — and the clipboard is one-way, text-only, or disabled entirely. Sending text and files back and forth becomes "email yourself" hell. Clipbridge fixes that.
@@ -64,11 +68,12 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 
 ### Install
 
-1. Download the latest `Clipbridge.dmg` from the [Releases](../../releases) page (or build it yourself — see below)
+1. Download the latest `Clipbridge-*.dmg` from the [Releases](https://github.com/sven-s/clipbridge/releases/latest) page (or build it yourself — see below)
 2. Open the DMG, drag **Clipbridge.app** to **Applications**
-3. Launch Clipbridge from Applications — a blue dot appears in your menu bar
-4. The app automatically runs `tailscale funnel --bg 8457` and detects your tailnet hostname
-5. Click the menu bar icon → **Copy UI URL**
+3. The .dmg is **not code-signed** — on first launch right-click → **Open** to bypass Gatekeeper. macOS remembers your choice afterward.
+4. Launch Clipbridge from Applications — a blue dot appears in your menu bar
+5. The app automatically runs `tailscale funnel --bg 8457` and detects your tailnet hostname
+6. Click the menu bar icon → **Copy UI URL**
 
 ### On every Windows machine
 

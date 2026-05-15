@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: build dmg
+        run: make dmg
+
+      - name: rename dmg with version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          cp build/Clipbridge.dmg "build/Clipbridge-${VERSION}.dmg"
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Clipbridge-*.dmg
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            Download `Clipbridge-${{ github.ref_name }}.dmg`, open it, drag **Clipbridge** to **Applications**.
+
+            > **Note:** The .dmg is **not code-signed**. On first launch, right-click the app → **Open** to bypass Gatekeeper. macOS will remember the choice afterward.
