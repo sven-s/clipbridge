@@ -1,6 +1,6 @@
-APP_NAME    = ClipSync
+APP_NAME    = Clipbridge
 BUILD_DIR   = build
-BINARY      = $(BUILD_DIR)/clipsync-mac
+BINARY      = $(BUILD_DIR)/clipbridge-mac
 APP_BUNDLE  = $(BUILD_DIR)/$(APP_NAME).app
 DMG         = $(BUILD_DIR)/$(APP_NAME).dmg
 ICON_PNG    = assets/icon.png

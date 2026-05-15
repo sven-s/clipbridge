@@ -1,6 +1,6 @@
 //go:build ignore
 
-// gen-icon generates a 1024x1024 ClipSync app icon at assets/icon.png.
+// gen-icon generates a 1024x1024 Clipbridge app icon at assets/icon.png.
 // Run via: go run scripts/gen-icon.go
 package main
 

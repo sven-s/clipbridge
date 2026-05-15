@@ -1,4 +1,4 @@
-# ClipSync — Claude project notes
+# Clipbridge — Claude project notes
 
 Cross-machine clipboard relay. Mac menu bar app hosts a web UI that any Windows browser can hit via Tailscale Funnel. Solves: corporate RDP (Horizon / Jump Desktop Fluid / etc.) that blocks clipboard or limits it to text.
 
@@ -15,7 +15,7 @@ One Go process on Mac:
 ## Build
 
 ```
-make          # full pipeline → build/ClipSync.dmg
+make          # full pipeline → build/Clipbridge.dmg
 make build    # binary only
 make app      # .app bundle
 make dmg      # .dmg installer
@@ -28,7 +28,7 @@ make clean
 ```
 src/cmd/mac/main.go          # entry: menu bar, polling, sends/receives
 src/internal/clip/           # Mac clipboard (pbcopy/pbpaste + osascript)
-src/internal/config/         # ~/.clipsync/config.json
+src/internal/config/         # ~/.clipbridge/config.json
 src/internal/server/         # HTTP handlers + slot storage
 src/internal/server/ui.go    # embedded HTML/JS as a Go string constant
 scripts/gen-icon.go          # generates assets/icon.png
@@ -38,7 +38,7 @@ docs/                        # architecture.md, security.md
 
 ## Conventions
 
-- Module path: `clipsync` (go.mod at root); imports look like `clipsync/src/internal/...`
+- Module path: `clipbridge` (go.mod at root); imports look like `clipbridge/src/internal/...`
 - Mac-only at the host. `//go:build darwin` on platform-specific files.
 - The Mac process talks to its OWN server via direct method calls on the `*Server` struct (`PutText`, `PutFile`, `PutZip`, `ReadText`, `CopyFile`, `ClearSlot`, `PeekMeta`, `GetMachines`). NOT via HTTP. HTTP is only for the browsers.
 - All API requests need `Authorization: Bearer <secret>`. `/receive` also accepts `?auth=` so browsers can use plain `<a download>`.

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"clipsync/src/internal/clip"
-	"clipsync/src/internal/config"
-	"clipsync/src/internal/server"
+	"clipbridge/src/internal/clip"
+	"clipbridge/src/internal/config"
+	"clipbridge/src/internal/server"
 
 	"fyne.io/systray"
 )
@@ -56,7 +56,7 @@ func main() {
 func onReady() {
 	systray.SetIcon(makeIcon(color.RGBA{66, 133, 244, 255}))
 	systray.SetTitle("")
-	systray.SetTooltip("ClipSync")
+	systray.SetTooltip("Clipbridge")
 
 	mStatus = systray.AddMenuItem("Starting…", "")
 	mStatus.Disable()
@@ -275,7 +275,7 @@ func doSendFile(machineName string) {
 		return
 	}
 	setStatus(fmt.Sprintf("Zipping %d files for %s…", len(paths), machineName))
-	zipName := fmt.Sprintf("clipsync-%d-files-%d.zip", len(paths), time.Now().Unix())
+	zipName := fmt.Sprintf("clipbridge-%d-files-%d.zip", len(paths), time.Now().Unix())
 	if err := srv.PutZip("to-"+machineName, zipName, paths); err != nil {
 		setStatus("Error: " + err.Error())
 		return

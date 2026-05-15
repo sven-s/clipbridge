@@ -87,6 +87,6 @@ func baseDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".clipsync")
+	dir := filepath.Join(home, ".clipbridge")
 	return dir, os.MkdirAll(dir, 0700)
 }

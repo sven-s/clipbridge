@@ -1,4 +1,4 @@
-module clipsync
+module clipbridge
 
 go 1.21
 

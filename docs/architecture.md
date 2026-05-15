@@ -47,8 +47,8 @@ Each registered machine gets two "slots":
 A slot is a pair of files on disk:
 
 ```
-~/.clipsync/slots/to-OFFICE-PC.meta   →  {"type":"text","size":42}
-~/.clipsync/slots/to-OFFICE-PC.data   →  raw payload
+~/.clipbridge/slots/to-OFFICE-PC.meta   →  {"type":"text","size":42}
+~/.clipbridge/slots/to-OFFICE-PC.data   →  raw payload
 ```
 
 The `.meta` file is what `/poll/<dir>` returns; the `.data` file is what `/receive/<dir>` streams.
@@ -73,7 +73,7 @@ The `.meta` file is what `/poll/<dir>` returns; the `.data` file is what `/recei
 
 - Browser sends `multipart/form-data`
 - Server uses `r.MultipartReader()` (streaming) instead of `r.ParseMultipartForm` (buffering)
-- Server streams the part directly to `~/.clipsync/slots/<dir>.data` with a 1 MiB I/O buffer
+- Server streams the part directly to `~/.clipbridge/slots/<dir>.data` with a 1 MiB I/O buffer
 
 **Downloads** (Mac → Windows):
 

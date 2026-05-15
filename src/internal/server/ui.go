@@ -5,7 +5,7 @@ const uiHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ClipSync</title>
+<title>Clipbridge</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:monospace;background:#111;color:#eee;min-height:100vh;padding:20px}
@@ -45,7 +45,7 @@ progress{width:100%;height:6px;border-radius:3px;margin-top:8px;accent-color:#4a
 <body>
 
 <div id="setup" style="display:none">
-  <h1>ClipSync Setup</h1>
+  <h1>Clipbridge Setup</h1>
   <p class="sub" style="margin-bottom:20px">First-time configuration</p>
   <div class="card">
     <label>Secret key<br>
@@ -61,7 +61,7 @@ progress{width:100%;height:6px;border-radius:3px;margin-top:8px;accent-color:#4a
 <div id="app" style="display:none">
   <div class="topbar">
     <div>
-      <h1>ClipSync</h1>
+      <h1>Clipbridge</h1>
       <div class="sub" id="machine-label"></div>
     </div>
     <div>
@@ -269,7 +269,7 @@ function uploadFiles(files) {
   xhr.setRequestHeader('X-File-Count', String(files.length));
   if (isMulti) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    xhr.setRequestHeader('X-Zip-Filename', 'clipsync-' + files.length + '-files-' + ts + '.zip');
+    xhr.setRequestHeader('X-Zip-Filename', 'clipbridge-' + files.length + '-files-' + ts + '.zip');
   }
   xhr.send(fd);
 }

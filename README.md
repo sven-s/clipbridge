@@ -1,8 +1,8 @@
-# ClipSync
+# Clipbridge
 
 > Cross-machine clipboard relay for when your corporate RDP won't let you copy-paste.
 
-You work on a Mac. You RDP into a customer's Windows machine through Horizon, AnyDesk, Jump Desktop, or similar — and the clipboard is one-way, text-only, or disabled entirely. Sending text and files back and forth becomes "email yourself" hell. ClipSync fixes that.
+You work on a Mac. You RDP into a customer's Windows machine through Horizon, AnyDesk, Jump Desktop, or similar — and the clipboard is one-way, text-only, or disabled entirely. Sending text and files back and forth becomes "email yourself" hell. Clipbridge fixes that.
 
 Common offenders:
 
@@ -11,7 +11,7 @@ Common offenders:
 - **AnyDesk / TeamViewer corporate policies** — often locked to one direction
 - **Browser-based RDP / Citrix HTML5** — no clipboard support at all
 
-ClipSync runs as a menu bar app on your Mac and serves a small web UI to any number of remote Windows machines through a Tailscale Funnel. No installer on the Windows side — open a browser, paste a URL, done.
+Clipbridge runs as a menu bar app on your Mac and serves a small web UI to any number of remote Windows machines through a Tailscale Funnel. No installer on the Windows side — open a browser, paste a URL, done.
 
 ---
 
@@ -64,9 +64,9 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 
 ### Install
 
-1. Download the latest `ClipSync.dmg` from the [Releases](../../releases) page (or build it yourself — see below)
-2. Open the DMG, drag **ClipSync.app** to **Applications**
-3. Launch ClipSync from Applications — a blue dot appears in your menu bar
+1. Download the latest `Clipbridge.dmg` from the [Releases](../../releases) page (or build it yourself — see below)
+2. Open the DMG, drag **Clipbridge.app** to **Applications**
+3. Launch Clipbridge from Applications — a blue dot appears in your menu bar
 4. The app automatically runs `tailscale funnel --bg 8457` and detects your tailnet hostname
 5. Click the menu bar icon → **Copy UI URL**
 
@@ -104,19 +104,19 @@ See [docs/architecture.md](docs/architecture.md) for the deep dive.
 ## Building from source
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/clipsync
-cd clipsync
+git clone https://github.com/YOUR-USERNAME/clipbridge
+cd clipbridge
 make dmg          # builds binary → .app → .dmg in ./build/
-open build/ClipSync.dmg
+open build/Clipbridge.dmg
 ```
 
 Available targets:
 
 | Target  | What it does                              |
 | ------- | ----------------------------------------- |
-| `make`  | full pipeline → `build/ClipSync.dmg`      |
-| `build` | just the binary at `build/clipsync-mac`   |
-| `app`   | `.app` bundle at `build/ClipSync.app`     |
+| `make`  | full pipeline → `build/Clipbridge.dmg`      |
+| `build` | just the binary at `build/clipbridge-mac`   |
+| `app`   | `.app` bundle at `build/Clipbridge.app`     |
 | `dmg`   | distributable `.dmg`                      |
 | `icon`  | regenerate `assets/icon.icns`             |
 | `run`   | build & run from terminal                 |
@@ -127,7 +127,7 @@ Available targets:
 ## Project structure
 
 ```
-clipsync/
+clipbridge/
 ├── README.md           you are here
 ├── LICENSE             MIT
 ├── Makefile
@@ -163,8 +163,8 @@ clipsync/
 - All traffic is HTTPS via Tailscale Funnel's Let's Encrypt cert
 - Every API call requires `Authorization: Bearer <secret>`
 - File downloads accept the secret as `?auth=` (so browsers can use `<a download>`)
-- The shared secret lives in `~/.clipsync/config.json` (mode `0600`)
-- Files in transit are stored as `~/.clipsync/slots/{to-NAME,from-NAME}.{data,meta}`; the data is plain — wipe the slots dir if it concerns you
+- The shared secret lives in `~/.clipbridge/config.json` (mode `0600`)
+- Files in transit are stored as `~/.clipbridge/slots/{to-NAME,from-NAME}.{data,meta}`; the data is plain — wipe the slots dir if it concerns you
 
 See [docs/security.md](docs/security.md) for the threat model.
 
