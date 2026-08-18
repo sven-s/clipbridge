@@ -18,9 +18,12 @@
               │ localhost:8457 (HTTP)                  │
               ▼                                        │
      ┌──────────────────┐                              │
-     │ tailscale funnel │ ◄────── HTTPS 443 ───────────┘
-     │  Let's Encrypt   │
-     │  *.ts.net        │
+     │  tunnel (TLS)    │ ◄────── HTTPS 443 ───────────┘
+     │  Tailscale       │
+     │  Funnel *.ts.net │
+     │       ── or ──   │
+     │  Cloudflare      │
+     │  your-domain     │
      └──────────────────┘
 ```
 
@@ -98,11 +101,27 @@ The 5-machine cap is a fyne.io/systray limitation — menu items can't be remove
 - Behind Zscaler, long-lived connections often get killed
 - WebSocket adds zero functional benefit for this UX
 
-## Tailscale Funnel
+## Transports
 
-- The app shells out to `tailscale funnel --bg 8457` on startup
-- It also runs `tailscale status --json` to read `Self.DNSName` for building the public URL
-- Funnel handles TLS termination with a real Let's Encrypt cert (CT-logged → Chrome accepts it without warning)
-- No port forwarding, no router config, no DDNS
+The Go server only ever speaks plain HTTP on `127.0.0.1:8457`. Something in front terminates TLS. `setupFunnel()` picks which, in this order:
 
-If Tailscale isn't running, the app falls back to `http://localhost:8457` which is fine for local testing.
+1. **`public_url` in `~/.clipbridge/config.json`** — if set, it wins. The app does no tunnel setup at all and just uses that URL for **Copy UI URL**. This is the Cloudflare Tunnel path (or any reverse proxy you run yourself).
+2. **Tailscale Funnel** — shells out to `tailscale funnel --bg 8457`, and reads `Self.DNSName` from `tailscale status --json` to build the public URL. Funnel terminates TLS with a real Let's Encrypt cert (CT-logged → Chrome accepts it without warning). No port forwarding, no router config, no DDNS.
+3. **`http://localhost:8457`** — fallback when Tailscale isn't installed or isn't running. Fine for local testing.
+
+### Why Funnel isn't always enough
+
+Corporate proxies commonly block `*.ts.net` outright — it classifies as Dynamic DNS or lands uncategorized. The symptom is TCP connecting and then the TLS handshake dying: `ERR_CONNECTION_CLOSED`, no HTTP status, no block page. Nothing on the Tailscale side fixes it; the domain is the problem. Arriving on a domain you own generally sails through, which is what the Cloudflare transport is for.
+
+Two things make this failure mode hard to diagnose, both worth knowing before you spend an afternoon on it:
+
+- **MagicDNS lies to you.** On the host Mac, `<host>.tail….ts.net` resolves to the tailnet IP (`100.x.y.z`), not the public Funnel ingress. `curl` returns `200` while the public path is stone dead.
+- **Funnel ingress IPs reject tailnet members.** Forcing the public path from the host with `curl --resolve …:443:185.40.234.x` gets you accept-then-close — the *exact* signature of a genuinely broken ingress. It isn't broken; you're just connecting from inside the tailnet.
+
+Verify from a vantage point that is neither on the tailnet nor behind the corporate proxy. A phone on cellular is the cheapest one.
+
+### Cloudflare trade-offs
+
+- **Uploads cap at 100 MB per request** on Free/Pro. Downloads (responses) are uncapped, so Mac → browser is unaffected at any size; browser → Mac over 100 MB returns `413`. Fixing that means chunked uploads in the web UI + a reassembling handler.
+- **Cloudflare sees plaintext.** It terminates TLS at the edge and re-originates to `cloudflared`. Same trust shape as Funnel (where Tailscale holds the cert), different company.
+- `cloudflared` runs as its own process — a LaunchAgent with `KeepAlive`, not something Clipbridge spawns. Setup lives in the README; it's deliberately outside the app so the app has no Cloudflare-specific code beyond reading `public_url`.

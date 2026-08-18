@@ -15,7 +15,7 @@ Common offenders:
 - **AnyDesk / TeamViewer corporate policies** — often locked to one direction
 - **Browser-based RDP / Citrix HTML5** — no clipboard support at all
 
-Clipbridge runs as a menu bar app on your Mac and serves a small web UI to any number of remote Windows machines through a Tailscale Funnel. No installer on the Windows side — open a browser, paste a URL, done.
+Clipbridge runs as a menu bar app on your Mac and serves a small web UI to any number of remote Windows machines through a public tunnel — **Tailscale Funnel** by default, or **Cloudflare Tunnel** on your own domain when corporate proxies block `*.ts.net`. No installer on the Windows side — open a browser, paste a URL, done.
 
 ---
 
@@ -29,7 +29,9 @@ Corporate Windows environments are hostile to ad-hoc tooling:
 - **Symantec / Defender heuristics** — unsigned Go binaries get false-positive flagged
 - **Unknown firewall rules** — random ports are gambling
 
-The web-UI approach sidesteps every one of those: nothing to install, plain HTTPS to a domain Tailscale already owns, no `.exe` to scan.
+The web-UI approach sidesteps every one of those: nothing to install, plain HTTPS, no `.exe` to scan.
+
+The one thing it can't sidestep is a proxy that blocks the *domain* you arrive on. Tailscale's `*.ts.net` is a frequent casualty — it lands in "Dynamic DNS" or "Uncategorized" and gets killed at the TLS handshake. That's why Clipbridge also supports fronting the same server with a **domain you own**, which corporate filters generally leave alone. See [Transports](#transports).
 
 ---
 
@@ -39,7 +41,7 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 - 🖥️ **Multi-machine** — register any number of Windows boxes, each gets its own slot in the menu bar
 - 📂 **Large files** — streams 3 GB+ files, no in-memory buffering, resumable via HTTP Range
 - 🔒 **Shared-secret auth** — bearer token on every request
-- 🌐 **Public via Tailscale Funnel** — Let's Encrypt cert, no port-forwarding, no router config
+- 🌐 **Two transports** — Tailscale Funnel out of the box, or Cloudflare Tunnel on your own domain when `*.ts.net` is blocked. Either way: real cert, no port-forwarding, no router config
 - 🪶 **Zero install on Windows** — just a browser bookmark
 
 ---
@@ -63,8 +65,9 @@ The web-UI approach sidesteps every one of those: nothing to install, plain HTTP
 ### Prerequisites
 
 - macOS 10.13+ (Universal binary — runs natively on both **Apple Silicon** and **Intel** Macs)
-- A [Tailscale](https://tailscale.com) account with **Funnel enabled** in the admin console
-- The Tailscale CLI installed and logged in on your Mac
+- A transport, either:
+  - a [Tailscale](https://tailscale.com) account with **Funnel enabled** in the admin console, plus the Tailscale CLI installed and logged in on your Mac — *or*
+  - a domain on [Cloudflare](https://dash.cloudflare.com) and `cloudflared` (see [Transports](#transports))
 
 ### Install
 
@@ -96,20 +99,98 @@ Now the Mac menu bar shows `Send Text → OFFICE-PC` / `Send File → OFFICE-PC`
 
 ---
 
+## Transports
+
+Clipbridge always serves plain HTTP on `127.0.0.1:8457`. Something in front of it terminates TLS and makes it reachable. Two options:
+
+|                     | Tailscale Funnel                     | Cloudflare Tunnel                       |
+| ------------------- | ------------------------------------ | --------------------------------------- |
+| Setup               | automatic, zero config               | ~5 minutes, needs a domain              |
+| Hostname            | `*.ts.net` (Tailscale's)             | yours, e.g. `clip.example.com`          |
+| Survives corporate proxies | ⚠️ often blocked              | ✅ usually fine                          |
+| Upload size limit   | none                                 | **100 MB per request** (Free/Pro)       |
+| Download size limit | none                                 | none                                    |
+| Throughput          | DERP-relayed, modest                 | Cloudflare edge, better                 |
+
+Start with Funnel. If the browser on the remote machine shows `ERR_CONNECTION_CLOSED` — TCP connects, TLS never completes — the proxy is blocking `*.ts.net` and no amount of Tailscale config will fix it. Switch to Cloudflare.
+
+> **Testing gotcha:** don't test Funnel from the host Mac. MagicDNS resolves your `*.ts.net` name to the tailnet IP, so it returns `200` while the public path is dead. Test from a machine that is neither on your tailnet nor behind the corporate proxy — a phone on cellular works.
+
+### Cloudflare Tunnel setup
+
+Requires a domain whose nameservers point at Cloudflare.
+
+```bash
+brew install cloudflared
+cloudflared tunnel login                              # browser: pick your zone
+cloudflared tunnel create clipbridge
+cloudflared tunnel route dns clipbridge clip.example.com
+```
+
+Write `~/.cloudflared/config.yml` (the `create` step prints your tunnel UUID):
+
+```yaml
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/YOU/.cloudflared/<TUNNEL-UUID>.json
+
+originRequest:
+  connectTimeout: 30s
+  noHappyEyeballs: true
+
+ingress:
+  - hostname: clip.example.com
+    service: http://127.0.0.1:8457
+  - service: http_status:404
+```
+
+Verify, then run it:
+
+```bash
+cloudflared tunnel ingress validate
+cloudflared tunnel run clipbridge
+```
+
+To keep it running across reboots, install a LaunchAgent at
+`~/Library/LaunchAgents/de.example.clipbridge-tunnel.plist` with `RunAtLoad` and
+`KeepAlive` set, invoking:
+
+```
+/opt/homebrew/bin/cloudflared --config /Users/YOU/.cloudflared/config.yml --no-autoupdate tunnel run clipbridge
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/de.example.clipbridge-tunnel.plist
+```
+
+Finally, point Clipbridge at it — add `public_url` to `~/.clipbridge/config.json` and restart the app:
+
+```json
+{
+  "secret": "…",
+  "server_port": 8457,
+  "public_url": "https://clip.example.com"
+}
+```
+
+With `public_url` set, Clipbridge skips Tailscale setup entirely and **Copy UI URL** hands out your own hostname.
+
+---
+
 ## How it works
 
 ```
 ┌───────────────┐         ┌────────────────────┐         ┌──────────────────┐
 │   Mac menu    │  HTTP   │  Tailscale Funnel  │  HTTPS  │  Windows browser │
-│   bar app     │←───────→│  (Let's Encrypt)   │←───────→│  (web UI)        │
-│   (Go)        │  :8457  │  https://...ts.net │   443   │                  │
+│   bar app     │←───────→│         or         │←───────→│  (web UI)        │
+│   (Go)        │  :8457  │  Cloudflare Tunnel │   443   │                  │
 └───────────────┘         └────────────────────┘         └──────────────────┘
-        ▲
+        ▲                   terminates TLS,
+        │                   forwards plain HTTP
         │ Local clipboard (osascript / pbcopy)
 ```
 
-- The Mac process hosts a Go HTTP server on `localhost:8457`
-- `tailscale funnel` exposes it publicly via a `*.ts.net` hostname with a real Let's Encrypt cert
+- The Mac process hosts a Go HTTP server on `localhost:8457` — always plain HTTP
+- The tunnel in front publishes it under a real cert; the Go server never sees TLS
 - Each Windows browser polls every 3 s using the shared secret
 - Files stream through; nothing is buffered in RAM
 
@@ -169,6 +250,8 @@ clipbridge/
 
 - **One-Mac-many-Windows** by design — the Mac is the server. If you need many-to-many, this isn't it.
 - **Tailscale Funnel bandwidth** — Funnel routes through Tailscale's DERP relays and is not optimized for high-throughput. 3 GB files work but expect minutes.
+- **`*.ts.net` is blocked in many corporate networks** — the symptom is `ERR_CONNECTION_CLOSED` before any HTTP happens. Not fixable from your side; use the Cloudflare transport.
+- **Cloudflare caps uploads at 100 MB per request** on Free/Pro plans. Downloads are uncapped, so Mac → browser works at any size; browser → Mac over 100 MB returns `413`.
 - **Zscaler "scan-and-burst"** — corporate proxies often buffer the entire download before releasing it, so the browser shows `0 B/s` for a long time then dumps the whole file at once. This is the proxy's behavior, not a bug.
 - **macOS only** for the host app. Linux/Windows host support is a future maybe — Windows clipboard handling on Linux/Windows hosts is messy enough that I haven't bothered.
 
@@ -176,7 +259,7 @@ clipbridge/
 
 ## Security
 
-- All traffic is HTTPS via Tailscale Funnel's Let's Encrypt cert
+- All traffic is HTTPS — Tailscale Funnel's Let's Encrypt cert, or Cloudflare's edge cert. Note that with Cloudflare, Cloudflare terminates TLS and can see plaintext; with Funnel, it's Tailscale. Pick whichever you'd rather trust.
 - Every API call requires `Authorization: Bearer <secret>`
 - File downloads accept the secret as `?auth=` (so browsers can use `<a download>`)
 - The shared secret lives in `~/.clipbridge/config.json` (mode `0600`)

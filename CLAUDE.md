@@ -1,12 +1,12 @@
 # Clipbridge — Claude project notes
 
-Cross-machine clipboard relay. Mac menu bar app hosts a web UI that any Windows browser can hit via Tailscale Funnel. Solves: corporate RDP (Horizon / Jump Desktop Fluid / etc.) that blocks clipboard or limits it to text.
+Cross-machine clipboard relay. Mac menu bar app hosts a web UI that any Windows browser can hit over a public tunnel. Solves: corporate RDP (Horizon / Jump Desktop Fluid / etc.) that blocks clipboard or limits it to text.
 
 ## Architecture in one breath
 
 One Go process on Mac:
 - `fyne.io/systray` menu bar
-- HTTP server on `:8457` (Tailscale Funnel terminates TLS → forwards plain HTTP)
+- HTTP server on `:8457` (the tunnel terminates TLS → forwards plain HTTP)
 - Embedded HTML/JS web UI served at `/` and `/ui`
 - Slot model: per-machine `to-NAME` and `from-NAME` directories with `.data` + `.meta` files
 - Each Windows browser registers via `POST /register` every 30 s; 2-minute liveness window
@@ -68,7 +68,10 @@ The release workflow:
 ## Constraints worth remembering before changing things
 
 - **Corporate proxies (Zscaler, etc.)** — buffer entire downloads and "scan-then-burst." `0 B/s` is normal for minutes. The UI explicitly warns users about this.
-- **Tailscale Funnel** — bandwidth-limited; expect slow but functional for big files. We do not own this path.
+- **Tailscale Funnel is blocked in the target corporate environment** (2026-08-18). `*.ts.net` is killed at the proxy — TCP connects, then `ERR_CONNECTION_CLOSED` before TLS completes. Confirmed on two independent corporate machines; `tailscale.com` itself may still resolve and load, so testing *that* proves nothing. Funnel is still the fallback when `public_url` is unset, but it is not the primary path.
+- **Testing Funnel from the host Mac is misleading** — MagicDNS resolves `<host>.tail….ts.net` to the tailnet IP, so it returns 200 while the public path is dead. Worse, connecting to a Funnel ingress IP (`185.40.234.0/24`) from *inside* the tailnet also gets accept-then-close, which looks exactly like a broken ingress. Only an off-tailnet, off-corporate vantage point tells the truth.
+- **Cloudflare Tunnel is the primary path** — `cloudflared` runs as a LaunchAgent (`~/Library/LaunchAgents/de.svens.clipbridge-tunnel.plist`), config in `~/.cloudflared/config.yml`, logs in `~/.cloudflared/clipbridge-tunnel.log`. Set `public_url` in `~/.clipbridge/config.json` and the app skips Funnel setup entirely.
+- **Cloudflare caps request bodies at 100 MB** on Free/Pro. Downloads (responses) are uncapped, so Mac → browser is fine at any size; browser → Mac uploads over 100 MB will 413 until chunked uploads exist.
 - **Launchd-launched apps have stripped PATH** — `tailscale` won't be found via `exec.LookPath`. We hardcode `/opt/homebrew/bin/tailscale`, `/usr/local/bin/tailscale`, and `/Applications/Tailscale.app/Contents/MacOS/Tailscale` candidates.
 - **systray icon on Mac** — PNG bytes via `image/png`. (The old Windows code needed ICO bytes; that's gone now.)
 - **No `cd <cwd>` prefix on `git` commands** — that triggers permission prompts in this harness.

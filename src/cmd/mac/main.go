@@ -155,6 +155,15 @@ func findTailscale() string {
 }
 
 func setupFunnel() {
+	// An explicitly configured public URL wins: the machine fronting Clipbridge
+	// may be behind something other than Funnel (Cloudflare Tunnel, a reverse
+	// proxy). Nothing to set up in that case — the tunnel runs on its own.
+	if u := strings.TrimRight(cfg.PublicURL, "/"); u != "" {
+		funnelURL = u
+		setStatus("Ready")
+		return
+	}
+
 	tsBin := findTailscale()
 	if tsBin == "" {
 		funnelURL = fmt.Sprintf("http://localhost:%d", cfg.ServerPort)

@@ -11,6 +11,10 @@ import (
 type Config struct {
 	Secret     string `json:"secret"`
 	ServerPort int    `json:"server_port"`
+	// PublicURL overrides Tailscale Funnel when set (e.g. a Cloudflare Tunnel
+	// hostname). Corporate proxies block *.ts.net, so Funnel is not always an
+	// option — see docs/architecture.md.
+	PublicURL string `json:"public_url,omitempty"`
 }
 
 func Load() (*Config, error) {
