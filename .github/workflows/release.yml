@@ -18,7 +18,7 @@ jobs:
           cache: true
 
       - name: build dmg
-        run: make dmg
+        run: make dmg BUILD_VERSION="${GITHUB_REF_NAME}"
 
       - name: rename dmg with version
         run: |

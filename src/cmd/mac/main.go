@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,6 +25,14 @@ import (
 
 const maxMachines = 5
 
+const (
+	repoURL   = "https://github.com/sven-s/clipbridge"
+	copyright = "© 2026 Sven Sönnichsen — MIT License"
+)
+
+// Overridden at build time: -ldflags "-X main.version=v1.2.3". See the Makefile.
+var version = "dev"
+
 type machineSlot struct {
 	name      string
 	mSendText *systray.MenuItem
@@ -35,6 +44,7 @@ var (
 	cfg       *config.Config
 	srv       *server.Server
 	funnelURL string
+	transport = "starting…" // human-readable, for the About window
 	mStatus   *systray.MenuItem
 	slots     [maxMachines]*machineSlot
 )
@@ -97,6 +107,7 @@ func onReady() {
 	systray.AddSeparator()
 	mUIURL := systray.AddMenuItem("UI: (starting…)", "Click to copy full URL")
 	systray.AddSeparator()
+	mAbout := systray.AddMenuItem("About Clipbridge", "Version, paths and license")
 	mQuit := systray.AddMenuItem("Quit", "")
 
 	go startServer()
@@ -110,6 +121,8 @@ func onReady() {
 				full := funnelURL + "/?secret=" + cfg.Secret
 				clip.WriteText(full)
 				setStatus("URL copied!")
+			case <-mAbout.ClickedCh:
+				go showAbout() // the dialog blocks until dismissed
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 			}
@@ -160,6 +173,7 @@ func setupFunnel() {
 	// proxy). Nothing to set up in that case — the tunnel runs on its own.
 	if u := strings.TrimRight(cfg.PublicURL, "/"); u != "" {
 		funnelURL = u
+		transport = "configured public_url (external tunnel)"
 		setStatus("Ready")
 		return
 	}
@@ -167,12 +181,14 @@ func setupFunnel() {
 	tsBin := findTailscale()
 	if tsBin == "" {
 		funnelURL = fmt.Sprintf("http://localhost:%d", cfg.ServerPort)
+		transport = "local only (Tailscale CLI not found)"
 		setStatus("Ready (Tailscale CLI not found)")
 		return
 	}
 	statusOut, err := exec.Command(tsBin, "status", "--json").Output()
 	if err != nil {
 		funnelURL = fmt.Sprintf("http://localhost:%d", cfg.ServerPort)
+		transport = "local only (Tailscale not running)"
 		setStatus("Ready (no Tailscale)")
 		return
 	}
@@ -187,15 +203,77 @@ func setupFunnel() {
 	}
 	if dnsName == "" {
 		funnelURL = fmt.Sprintf("http://localhost:%d", cfg.ServerPort)
+		transport = "local only (no tailnet hostname)"
 		setStatus("Ready")
 		return
 	}
 	funnelURL = fmt.Sprintf("https://%s", dnsName)
+	transport = "Tailscale Funnel"
 	portStr := fmt.Sprintf("%d", cfg.ServerPort)
 	if out, err := exec.Command(tsBin, "funnel", "--bg", portStr).CombinedOutput(); err != nil {
 		log.Printf("tailscale funnel: %v — %s", err, out)
 	}
 	setStatus("Ready")
+}
+
+// showAbout opens a native dialog with version, paths and copyright.
+//
+// fyne.io/systray has no window of its own and the app deliberately carries no
+// GUI toolkit, so the "window" is an osascript dialog. The details text is
+// passed as an argv item rather than interpolated into the script — paths and
+// machine names would otherwise need AppleScript quoting.
+func showAbout() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "~"
+	}
+	machines := srv.GetMachines()
+	connected := "none"
+	if len(machines) > 0 {
+		connected = strings.Join(machines, ", ")
+	}
+
+	details := fmt.Sprintf(`Clipbridge %s
+Cross-machine clipboard relay.
+
+Public URL:   %s
+Transport:    %s
+Local server: http://localhost:%d
+Config:       %s
+Slots:        %s
+Machines:     %s
+
+%s
+%s`,
+		version,
+		funnelURL,
+		transport,
+		cfg.ServerPort,
+		filepath.Join(home, ".clipbridge", "config.json"),
+		filepath.Join(home, ".clipbridge", "slots"),
+		connected,
+		copyright,
+		repoURL,
+	)
+
+	const script = `on run argv
+display dialog (item 1 of argv) with title "About Clipbridge" buttons {"Copy Details", "GitHub", "OK"} default button "OK" with icon note
+end run`
+
+	out, err := exec.Command("osascript", "-e", script, details).Output()
+	if err != nil {
+		log.Printf("about dialog: %v", err)
+		return
+	}
+	switch {
+	case strings.Contains(string(out), "Copy Details"):
+		clip.WriteText(details)
+		setStatus("About details copied!")
+	case strings.Contains(string(out), "GitHub"):
+		if err := exec.Command("open", repoURL).Run(); err != nil {
+			log.Printf("open %s: %v", repoURL, err)
+		}
+	}
 }
 
 func pollMachines() {

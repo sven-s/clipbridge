@@ -6,6 +6,19 @@ DMG         = $(BUILD_DIR)/$(APP_NAME).dmg
 ICON_PNG    = assets/icon.png
 ICON_ICNS   = assets/icon.icns
 
+# Stamped into the About window. Release CI passes the tag explicitly, since a
+# shallow checkout can't always resolve `git describe`. Note this is deliberately
+# NOT called VERSION — `make tag` requires that one to be empty by default.
+BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS       = -s -w -X main.version=$(BUILD_VERSION)
+
+# CFBundleShortVersionString must be plain dotted digits, so strip the leading
+# "v" and any -dirty / -g<sha> suffix. Anything left holding a non-digit (an
+# untagged `git describe` sha, "dev") falls back to 0.0.0.
+# Keep this free of parentheses — make parses balanced parens inside $(shell ...)
+# and would cut the command short at the first stray ")".
+CF_VERSION = $(shell echo "$(BUILD_VERSION)" | sed -E -e 's/^v//' -e 's/[-+].*$$//' -e 's/^.*[^0-9.].*$$/0.0.0/' -e 's/^$$/0.0.0/')
+
 .PHONY: all build app dmg run clean deps icon cask-sha tag
 
 all: dmg
@@ -28,8 +41,8 @@ build: $(BINARY)
 
 $(BINARY): $(shell find src -name '*.go')
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="clang -arch arm64"  go build -ldflags="-s -w" -o $(BUILD_DIR)/clipbridge-arm64 ./src/cmd/mac/
-	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="clang -arch x86_64" go build -ldflags="-s -w" -o $(BUILD_DIR)/clipbridge-amd64 ./src/cmd/mac/
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="clang -arch arm64"  go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/clipbridge-arm64 ./src/cmd/mac/
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="clang -arch x86_64" go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/clipbridge-amd64 ./src/cmd/mac/
 	lipo -create -output $(BINARY) $(BUILD_DIR)/clipbridge-arm64 $(BUILD_DIR)/clipbridge-amd64
 	@rm -f $(BUILD_DIR)/clipbridge-arm64 $(BUILD_DIR)/clipbridge-amd64
 	@file $(BINARY)
@@ -68,7 +81,9 @@ $(APP_BUNDLE): $(BINARY) $(ICON_ICNS)
 	chmod +x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	cp $(ICON_ICNS) $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
 	cp scripts/Info.plist $(APP_BUNDLE)/Contents/Info.plist
-	@echo "→ $(APP_BUNDLE)"
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CF_VERSION)" $(APP_BUNDLE)/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(CF_VERSION)" $(APP_BUNDLE)/Contents/Info.plist
+	@echo "→ $(APP_BUNDLE) ($(CF_VERSION))"
 
 dmg: $(DMG)
 

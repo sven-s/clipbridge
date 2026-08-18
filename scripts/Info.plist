@@ -12,10 +12,11 @@
 	<string>Clipbridge</string>
 	<key>CFBundleDisplayName</key>
 	<string>Clipbridge</string>
+	<!-- Both version keys are overwritten by `make app` from BUILD_VERSION. -->
 	<key>CFBundleVersion</key>
-	<string>1.0</string>
+	<string>0.0.0</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>0.0.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleSignature</key>
@@ -27,6 +28,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>MIT License</string>
+	<string>© 2026 Sven Sönnichsen — MIT License</string>
 </dict>
 </plist>
