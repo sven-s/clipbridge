@@ -67,16 +67,32 @@ The `.meta` file is what `/poll/<dir>` returns; the `.data` file is what `/recei
 | GET    | `/poll/<dir>`    | yes  | Returns slot metadata or 404                     |
 | GET    | `/receive/<dir>` | yes* | Streams slot data (supports HTTP Range)          |
 | DELETE | `/clear/<dir>`   | yes  | Removes the slot                                 |
+| POST   | `/upload/init`   | yes  | Starts a chunked upload; returns `uploadId` + `chunkSize` |
+| POST   | `/upload/chunk/<id>/<fileIdx>?offset=N` | yes | Writes one slice at byte offset `N` |
+| POST   | `/upload/complete/<id>` | yes | Validates sizes, moves or zips into the slot |
+| DELETE | `/upload/abort/<id>` | yes | Discards a session and its staged bytes      |
 
 \* `/receive` also accepts `?auth=<secret>` so the browser's native download manager can use a plain `<a href download>` link.
 
 ## Streaming details
 
-**Uploads** (Windows → Mac):
+**Uploads** (Windows → Mac) go through the chunked protocol, because Cloudflare rejects any request body over 100 MB with a `413`. The browser slices each file with `File.slice()` and sends one request per slice:
 
-- Browser sends `multipart/form-data`
-- Server uses `r.MultipartReader()` (streaming) instead of `r.ParseMultipartForm` (buffering)
-- Server streams the part directly to `~/.clipbridge/slots/<dir>.data` with a 1 MiB I/O buffer
+```
+POST /upload/init                          → {uploadId, chunkSize}
+POST /upload/chunk/<id>/0?offset=0         ─┐
+POST /upload/chunk/<id>/0?offset=67108864   ├ one request per 64 MiB slice
+POST /upload/chunk/<id>/1?offset=0         ─┘
+POST /upload/complete/<id>                 → slot is written
+```
+
+- **Offsets, not sequence numbers.** The server seeks to the declared offset and writes there, so re-sending a chunk overwrites exactly the range it wrote before. That makes retries idempotent, which is what lets the client retry a chunk three times with backoff instead of restarting a multi-GB transfer.
+- **Sizes are declared at init and verified at completion.** Every staged part must match its declared size exactly, so a chunk silently truncated by a proxy fails loudly rather than landing a corrupt file on the Mac.
+- **Reads are capped per chunk** at what the file has left, so a client cannot grow a file past what it declared — that bound is what limits the disk a session can consume.
+- **Single-file completion is a rename**, not a copy: staging lives at `~/.clipbridge/slots/.uploads/<id>/`, on the same filesystem as the slots. Multi-file completion streams the parts into a zip through a 1 MiB window.
+- **Sessions live in memory only.** A restart wipes the staging directory, because there would be no way to resume them anyway. Abandoned sessions are swept after 24 h, both on each new init and hourly.
+
+`/send/<dir>` still accepts a `multipart/form-data` body in one shot and is the path for text. It works for files too, under whatever body limit the tunnel in front imposes — no limit on Funnel, 100 MB on Cloudflare.
 
 **Downloads** (Mac → Windows):
 
@@ -122,6 +138,7 @@ Verify from a vantage point that is neither on the tailnet nor behind the corpor
 
 ### Cloudflare trade-offs
 
-- **Uploads cap at 100 MB per request** on Free/Pro. Downloads (responses) are uncapped, so Mac → browser is unaffected at any size; browser → Mac over 100 MB returns `413`. Fixing that means chunked uploads in the web UI + a reassembling handler.
+- **Uploads cap at 100 MB per request** on Free/Pro. This is worked around rather than avoided: the web UI slices files into 64 MiB chunks and the server reassembles them, so browser → Mac has no practical size limit. Verified end to end with a 150 MB file through the tunnel, checksum-matched. A single-shot `POST /send/` of the same file returns `413`.
+- **Downloads are uncapped** — responses do not count against the body limit, so Mac → browser was never affected.
 - **Cloudflare sees plaintext.** It terminates TLS at the edge and re-originates to `cloudflared`. Same trust shape as Funnel (where Tailscale holds the cert), different company.
 - `cloudflared` runs as its own process — a LaunchAgent with `KeepAlive`, not something Clipbridge spawns. Setup lives in the README; it's deliberately outside the app so the app has no Cloudflare-specific code beyond reading `public_url`.

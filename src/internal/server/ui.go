@@ -220,7 +220,48 @@ function fmtTime(s) {
   return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
 }
 
-function uploadFiles(files) {
+const UPLOAD_RETRIES = 3;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// One chunk, as a raw body. XHR rather than fetch because only XHR reports
+// upload progress, which is the whole point behind a proxy that stalls for
+// minutes at a time.
+function postChunk(url, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + secret);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error('HTTP ' + xhr.status + (xhr.responseText ? ': ' + xhr.responseText.trim() : '')));
+    };
+    xhr.onerror = () => reject(new Error('connection dropped'));
+    xhr.ontimeout = () => reject(new Error('timed out'));
+    xhr.send(blob);
+  });
+}
+
+// Retrying a chunk is safe: the server addresses writes by byte offset, so a
+// resent chunk overwrites exactly the range it wrote before.
+async function withRetry(fn, onRetry) {
+  let lastErr;
+  for (let attempt = 1; attempt <= UPLOAD_RETRIES; attempt++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      if (attempt < UPLOAD_RETRIES) {
+        if (onRetry) onRetry(attempt, e);
+        await sleep(1000 * attempt);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function uploadFiles(files) {
   if (!files || files.length === 0) return;
   const prog = document.getElementById('upload-progress');
   const stat = document.getElementById('upload-status');
@@ -234,44 +275,84 @@ function uploadFiles(files) {
   const label = isMulti
     ? files.length + ' files (' + fmtBytes(totalSize) + ') — server will zip them'
     : files[0].name + ' (' + fmtBytes(files[0].size) + ')';
-  stat.textContent = 'Uploading ' + label + '…';
+  stat.textContent = 'Starting upload of ' + label + '…';
 
   const startTime = Date.now();
-  const fd = new FormData();
-  for (const f of files) fd.append('file', f, f.name);
-
-  const xhr = new XMLHttpRequest();
-  xhr.upload.onprogress = e => {
-    if (!e.lengthComputable) return;
+  const render = loaded => {
     const elapsed = (Date.now() - startTime) / 1000;
-    const speed = elapsed > 0 ? e.loaded / elapsed : 0;
-    const eta = speed > 0 ? Math.round((e.total - e.loaded) / speed) : 0;
-    const pct = Math.round(e.loaded * 100 / e.total);
+    const speed = elapsed > 0 ? loaded / elapsed : 0;
+    const eta = speed > 0 ? Math.round((totalSize - loaded) / speed) : 0;
+    const pct = totalSize > 0 ? Math.round(loaded * 100 / totalSize) : 100;
     prog.value = pct;
     stat.textContent =
-      pct + '% — ' + fmtBytes(e.loaded) + ' / ' + fmtBytes(e.total) +
+      pct + '% — ' + fmtBytes(loaded) + ' / ' + fmtBytes(totalSize) +
       ' — ' + fmtBytes(speed) + '/s — ETA ' + fmtTime(eta);
   };
-  xhr.onload = () => {
-    prog.style.display = 'none';
-    if (xhr.status === 204) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      stat.textContent = (isMulti ? files.length + ' files' : files[0].name) +
-        ' sent in ' + elapsed + 's ✓';
-      setStatus('ok', 'File sent ✓');
-    } else {
-      stat.textContent = 'Upload failed (' + xhr.status + ')';
+
+  let uploadId = null;
+  try {
+    let zipName = '';
+    if (isMulti) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      zipName = 'clipbridge-' + files.length + '-files-' + ts + '.zip';
     }
-  };
-  xhr.onerror = () => { stat.textContent = 'Upload error — connection dropped'; };
-  xhr.open('POST', '/send/from-' + name);
-  xhr.setRequestHeader('Authorization', 'Bearer ' + secret);
-  xhr.setRequestHeader('X-File-Count', String(files.length));
-  if (isMulti) {
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    xhr.setRequestHeader('X-Zip-Filename', 'clipbridge-' + files.length + '-files-' + ts + '.zip');
+    const initRes = await fetch('/upload/init', {
+      method: 'POST',
+      headers: headers({'Content-Type': 'application/json'}),
+      body: JSON.stringify({
+        dir: 'from-' + name,
+        files: files.map(f => ({name: f.name, size: f.size})),
+        zipName: zipName,
+      }),
+    });
+    if (!initRes.ok) throw new Error('init failed (' + initRes.status + ')');
+    const init = await initRes.json();
+    uploadId = init.uploadId;
+    const chunkSize = init.chunkSize;
+
+    // Committed bytes. In-flight progress is added on top so the bar keeps
+    // moving inside a single chunk without double-counting once it lands.
+    let sent = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const offsets = [];
+      for (let off = 0; off < f.size; off += chunkSize) offsets.push(off);
+      // A zero-byte file still needs its part created, or completion sees a gap.
+      if (offsets.length === 0) offsets.push(0);
+
+      for (const off of offsets) {
+        const blob = f.slice(off, Math.min(off + chunkSize, f.size));
+        const url = '/upload/chunk/' + uploadId + '/' + i + '?offset=' + off;
+        await withRetry(
+          () => postChunk(url, blob, loaded => render(sent + loaded)),
+          (attempt, err) => {
+            stat.textContent = 'Chunk failed (' + err.message + ') — retry ' +
+              (attempt + 1) + '/' + UPLOAD_RETRIES + '…';
+          }
+        );
+        sent += blob.size;
+        render(sent);
+      }
+    }
+
+    const done = await fetch('/upload/complete/' + uploadId, {method: 'POST', headers: headers()});
+    if (!done.ok) throw new Error((await done.text()).trim() || ('complete failed (' + done.status + ')'));
+    uploadId = null;
+
+    prog.style.display = 'none';
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    stat.textContent = (isMulti ? files.length + ' files' : files[0].name) +
+      ' sent in ' + elapsed + 's ✓';
+    setStatus('ok', 'File sent ✓');
+  } catch (e) {
+    prog.style.display = 'none';
+    stat.textContent = 'Upload failed — ' + e.message;
+    setStatus('err', 'Upload failed');
+    if (uploadId) {
+      // Best effort: drop the staged bytes rather than leave them for the sweep.
+      fetch('/upload/abort/' + uploadId, {method: 'DELETE', headers: headers()}).catch(() => {});
+    }
   }
-  xhr.send(fd);
 }
 
 async function pollIncoming() {

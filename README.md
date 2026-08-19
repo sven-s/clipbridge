@@ -39,7 +39,7 @@ The one thing it can't sidestep is a proxy that blocks the *domain* you arrive o
 
 - 📋 **Bidirectional clipboard** — text and files, in both directions
 - 🖥️ **Multi-machine** — register any number of Windows boxes, each gets its own slot in the menu bar
-- 📂 **Large files** — streams 3 GB+ files, no in-memory buffering, resumable via HTTP Range
+- 📂 **Large files** — streams 3 GB+ files both ways, no in-memory buffering, resumable downloads via HTTP Range, chunked uploads with per-chunk retry
 - 🔒 **Shared-secret auth** — bearer token on every request
 - 🌐 **Two transports** — Tailscale Funnel out of the box, or Cloudflare Tunnel on your own domain when `*.ts.net` is blocked. Either way: real cert, no port-forwarding, no router config
 - 🪶 **Zero install on Windows** — just a browser bookmark
@@ -108,7 +108,7 @@ Clipbridge always serves plain HTTP on `127.0.0.1:8457`. Something in front of i
 | Setup               | automatic, zero config               | ~5 minutes, needs a domain              |
 | Hostname            | `*.ts.net` (Tailscale's)             | yours, e.g. `clip.example.com`          |
 | Survives corporate proxies | ⚠️ often blocked              | ✅ usually fine                          |
-| Upload size limit   | none                                 | **100 MB per request** (Free/Pro)       |
+| Upload size limit   | none                                 | none — chunked past the 100 MB cap      |
 | Download size limit | none                                 | none                                    |
 | Throughput          | DERP-relayed, modest                 | Cloudflare edge, better                 |
 
@@ -251,7 +251,7 @@ clipbridge/
 - **One-Mac-many-Windows** by design — the Mac is the server. If you need many-to-many, this isn't it.
 - **Tailscale Funnel bandwidth** — Funnel routes through Tailscale's DERP relays and is not optimized for high-throughput. 3 GB files work but expect minutes.
 - **`*.ts.net` is blocked in many corporate networks** — the symptom is `ERR_CONNECTION_CLOSED` before any HTTP happens. Not fixable from your side; use the Cloudflare transport.
-- **Cloudflare caps uploads at 100 MB per request** on Free/Pro plans. Downloads are uncapped, so Mac → browser works at any size; browser → Mac over 100 MB returns `413`.
+- **Cloudflare's 100 MB request cap is worked around, not inherited** — the web UI slices uploads into 64 MiB chunks and the server reassembles them, so there is no practical size limit in either direction. Chunks retry individually, so one dropped slice doesn't restart a multi-GB transfer.
 - **Zscaler "scan-and-burst"** — corporate proxies often buffer the entire download before releasing it, so the browser shows `0 B/s` for a long time then dumps the whole file at once. This is the proxy's behavior, not a bug.
 - **macOS only** for the host app. Linux/Windows host support is a future maybe — Windows clipboard handling on Linux/Windows hosts is messy enough that I haven't bothered.
 

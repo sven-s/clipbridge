@@ -27,6 +27,7 @@ type Server struct {
 	mu       sync.RWMutex
 	meta     map[string]*SlotMeta
 	machines map[string]time.Time // name → last seen
+	uploads  *uploadManager
 }
 
 func New(secret, slotsDir string) *Server {
@@ -35,9 +36,25 @@ func New(secret, slotsDir string) *Server {
 		slotsDir: slotsDir,
 		meta:     make(map[string]*SlotMeta),
 		machines: make(map[string]time.Time),
+		// Staging sits beside the slots so finishing a single-file upload is a
+		// rename, not a copy of the whole payload.
+		uploads: newUploadManager(filepath.Join(slotsDir, ".uploads")),
 	}
 	s.restoreSlots()
 	return s
+}
+
+// validDir rejects anything that is not a plain to-/from- slot name. A prefix
+// check alone is not enough: "to-../../x" starts with "to-" and would otherwise
+// let an authenticated caller write outside the slots directory.
+func validDir(dir string) bool {
+	if !strings.HasPrefix(dir, "to-") && !strings.HasPrefix(dir, "from-") {
+		return false
+	}
+	if strings.Contains(dir, "..") || strings.ContainsAny(dir, `/\`) {
+		return false
+	}
+	return dir == filepath.Base(dir)
 }
 
 func (s *Server) restoreSlots() {
@@ -72,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/register", s.auth(s.handleRegister))
 	mux.HandleFunc("/machines", s.auth(s.handleMachines))
 	mux.HandleFunc("/send/", s.auth(s.handleSend))
+	mux.HandleFunc("/upload/", s.auth(s.handleUpload))
 	mux.HandleFunc("/poll/", s.auth(s.handlePoll))
 	mux.HandleFunc("/receive/", s.authFlex(s.handleReceive))
 	mux.HandleFunc("/clear/", s.auth(s.handleClear))
@@ -129,7 +147,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := strings.TrimPrefix(r.URL.Path, "/send/")
-	if !strings.HasPrefix(dir, "to-") && !strings.HasPrefix(dir, "from-") {
+	if !validDir(dir) {
 		http.Error(w, "invalid direction", http.StatusBadRequest)
 		return
 	}
@@ -241,6 +259,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 	dir := strings.TrimPrefix(r.URL.Path, "/poll/")
+	if !validDir(dir) {
+		http.Error(w, "invalid direction", http.StatusBadRequest)
+		return
+	}
 	s.mu.RLock()
 	meta := s.meta[dir]
 	s.mu.RUnlock()
@@ -254,6 +276,10 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleReceive(w http.ResponseWriter, r *http.Request) {
 	dir := strings.TrimPrefix(r.URL.Path, "/receive/")
+	if !validDir(dir) {
+		http.Error(w, "invalid direction", http.StatusBadRequest)
+		return
+	}
 	slotBase := filepath.Join(s.slotsDir, dir)
 	metaData, err := os.ReadFile(slotBase + ".meta")
 	if err != nil {
@@ -290,6 +316,10 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := strings.TrimPrefix(r.URL.Path, "/clear/")
+	if !validDir(dir) {
+		http.Error(w, "invalid direction", http.StatusBadRequest)
+		return
+	}
 	s.ClearSlot(dir)
 	w.WriteHeader(http.StatusNoContent)
 }
