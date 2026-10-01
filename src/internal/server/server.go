@@ -22,13 +22,24 @@ type SlotMeta struct {
 }
 
 type Server struct {
-	secret   string
-	slotsDir string
-	mu       sync.RWMutex
-	meta     map[string]*SlotMeta
-	machines map[string]time.Time // name → last seen
-	uploads  *uploadManager
+	secret      string
+	slotsDir    string
+	mu          sync.RWMutex
+	meta        map[string]*SlotMeta
+	machines    map[string]time.Time // name → last seen
+	machDirty   bool
+	machFlushed time.Time
+	uploads     *uploadManager
 }
+
+// machineTTL is how long a browser stays listed after its last request.
+//
+// It is deliberately far longer than the 30 s heartbeat: browsers throttle
+// timers in hidden tabs (Chrome drops to ~1/min, then freezes the tab
+// entirely), and an RDP session that is minimised or disconnected stops
+// firing them at all. A short window made machines vanish from the menu
+// whenever the user looked away from the tab.
+const machineTTL = 15 * time.Minute
 
 func New(secret, slotsDir string) *Server {
 	s := &Server{
@@ -41,6 +52,7 @@ func New(secret, slotsDir string) *Server {
 		uploads: newUploadManager(filepath.Join(slotsDir, ".uploads")),
 	}
 	s.restoreSlots()
+	s.restoreMachines()
 	return s
 }
 
@@ -76,6 +88,58 @@ func (s *Server) restoreSlots() {
 	}
 }
 
+func (s *Server) machinesPath() string {
+	return filepath.Join(s.slotsDir, "machines.json")
+}
+
+// restoreMachines reloads the machine list so a restart of the app does not
+// blank the menu until every browser happens to heartbeat again.
+func (s *Server) restoreMachines() {
+	data, err := os.ReadFile(s.machinesPath())
+	if err != nil {
+		return
+	}
+	var saved map[string]time.Time
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	cutoff := time.Now().Add(-machineTTL)
+	for name, t := range saved {
+		if t.After(cutoff) {
+			s.machines[name] = t
+		}
+	}
+}
+
+// flushMachines writes the list at most twice a minute. Callers hold s.mu.
+func (s *Server) flushMachines() {
+	if !s.machDirty || time.Since(s.machFlushed) < 30*time.Second {
+		return
+	}
+	data, err := json.Marshal(s.machines)
+	if err != nil {
+		return
+	}
+	if os.WriteFile(s.machinesPath(), data, 0o600) == nil {
+		s.machDirty = false
+		s.machFlushed = time.Now()
+	}
+}
+
+// touchMachine marks a machine alive. Every authenticated request counts, not
+// just /register — a tab whose timers are throttled may still be polling, and
+// an upload that takes ten minutes is proof of life on its own.
+func (s *Server) touchMachine(name string) {
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	s.machines[name] = time.Now()
+	s.machDirty = true
+	s.flushMachines()
+	s.mu.Unlock()
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +171,7 @@ func (s *Server) authFlex(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		s.touchMachine(r.URL.Query().Get("machine"))
 		next(w, r)
 	}
 }
@@ -118,6 +183,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		s.touchMachine(r.Header.Get("X-Machine-Name"))
 		next(w, r)
 	}
 }
@@ -130,9 +196,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	s.machines[body.Name] = time.Now()
-	s.mu.Unlock()
+	s.touchMachine(body.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -471,11 +535,11 @@ func (s *Server) ClearSlot(dir string) {
 	s.mu.Unlock()
 }
 
-// GetMachines returns names of machines that checked in within the last 2 minutes, sorted alphabetically.
+// GetMachines returns names of machines seen within machineTTL, sorted alphabetically.
 func (s *Server) GetMachines() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cutoff := time.Now().Add(-2 * time.Minute)
+	cutoff := time.Now().Add(-machineTTL)
 	var names []string
 	for name, t := range s.machines {
 		if t.After(cutoff) {

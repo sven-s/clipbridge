@@ -148,10 +148,24 @@ function startApp() {
   setInterval(register, 30000);
   pollTimer = setInterval(pollIncoming, 3000);
   pollIncoming();
+
+  // Background tabs get their timers throttled or frozen outright, and an RDP
+  // session that is minimised stops firing them completely. Re-register the
+  // moment the tab (or the network) comes back so the user never has to hit
+  // refresh to reappear on the Mac.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { register(); pollIncoming(); }
+  });
+  window.addEventListener('focus', register);
+  window.addEventListener('online', register);
+  window.addEventListener('pageshow', register);
 }
 
 function headers(extra) {
-  return Object.assign({'Authorization': 'Bearer ' + secret}, extra || {});
+  // X-Machine-Name on every request: the server treats any authenticated call
+  // as proof of life, so a throttled heartbeat alone can't drop us off the
+  // Mac's menu.
+  return Object.assign({'Authorization': 'Bearer ' + secret, 'X-Machine-Name': name}, extra || {});
 }
 
 async function register() {
@@ -432,7 +446,7 @@ function downloadIncoming(dir, filename) {
     'so you can safely retry if it actually fails.';
 
   const a = document.createElement('a');
-  a.href = '/receive/' + dir + '?auth=' + encodeURIComponent(secret);
+  a.href = '/receive/' + dir + '?auth=' + encodeURIComponent(secret) + '&machine=' + encodeURIComponent(name);
   a.download = filename;
   a.click();
 }
