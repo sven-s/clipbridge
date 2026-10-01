@@ -150,12 +150,39 @@ cloudflared tunnel ingress validate
 cloudflared tunnel run clipbridge
 ```
 
-To keep it running across reboots, install a LaunchAgent at
-`~/Library/LaunchAgents/de.example.clipbridge-tunnel.plist` with `RunAtLoad` and
-`KeepAlive` set, invoking:
+To keep it running across reboots, save the following as
+`~/Library/LaunchAgents/de.example.clipbridge-tunnel.plist` (replace `/Users/YOU`
+with your actual home path):
 
-```
-/opt/homebrew/bin/cloudflared --config /Users/YOU/.cloudflared/config.yml --no-autoupdate tunnel run clipbridge
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>de.example.clipbridge-tunnel</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/cloudflared</string>
+        <string>--config</string>
+        <string>/Users/YOU/.cloudflared/config.yml</string>
+        <string>--no-autoupdate</string>
+        <string>tunnel</string>
+        <string>run</string>
+        <string>clipbridge</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/.cloudflared/clipbridge-tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/.cloudflared/clipbridge-tunnel.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU</string>
+</dict>
+</plist>
 ```
 
 ```bash
