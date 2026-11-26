@@ -73,13 +73,14 @@ $(ICON_ICNS): $(ICON_PNG)
 
 app: $(APP_BUNDLE)
 
-$(APP_BUNDLE): $(BINARY) $(ICON_ICNS)
+$(APP_BUNDLE): $(BINARY) $(ICON_ICNS) scripts/setup-tunnel.sh
 	@rm -rf $(APP_BUNDLE)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources
 	cp $(BINARY) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	chmod +x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	cp $(ICON_ICNS) $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
+	install -m 755 scripts/setup-tunnel.sh $(APP_BUNDLE)/Contents/Resources/setup-tunnel.sh
 	cp scripts/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CF_VERSION)" $(APP_BUNDLE)/Contents/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(CF_VERSION)" $(APP_BUNDLE)/Contents/Info.plist

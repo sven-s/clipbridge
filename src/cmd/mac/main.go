@@ -107,6 +107,7 @@ func onReady() {
 
 	systray.AddSeparator()
 	mUIURL := systray.AddMenuItem("UI: (starting…)", "Click to copy full URL")
+	addTunnelMenu()
 	systray.AddSeparator()
 	mAbout := systray.AddMenuItem("About Clipbridge", "Version, paths and license")
 	mQuit := systray.AddMenuItem("Quit", "")

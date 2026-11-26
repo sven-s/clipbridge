@@ -120,6 +120,12 @@ Start with Funnel. If the browser on the remote machine shows `ERR_CONNECTION_CL
 
 Requires a domain whose nameservers point at Cloudflare.
 
+**Guided:** menu bar → **Tunnel → Set Up Cloudflare Tunnel…** opens Terminal and runs [`scripts/setup-tunnel.sh`](scripts/setup-tunnel.sh). It does every step below, asks before overwriting anything (keeping `.bak` copies), and is safe to re-run to repair a broken setup. Afterwards: **Tunnel → Restart Clipbridge**.
+
+The **Tunnel** submenu also shows whether `cloudflared` is running and whether `https://<your-host>/healthz` answers through Cloudflare, and has Restart Tunnel, Open Tunnel Log, and Edit config items.
+
+**Manual:**
+
 ```bash
 brew install cloudflared
 cloudflared tunnel login                              # browser: pick your zone

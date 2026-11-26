@@ -409,3 +409,17 @@ func TestLegacyFromSlotMigrates(t *testing.T) {
 		t.Fatalf("data = %q", got)
 	}
 }
+
+// TestHealthzIsPublic: the menu bar probes it through the tunnel without a secret.
+func TestHealthzIsPublic(t *testing.T) {
+	_, ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != HealthBody {
+		t.Fatalf("healthz: %d %q", resp.StatusCode, body)
+	}
+}

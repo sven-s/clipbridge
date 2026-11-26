@@ -43,6 +43,9 @@ type Server struct {
 // whenever the user looked away from the tab.
 const machineTTL = 15 * time.Minute
 
+// HealthBody is what /healthz returns; the Mac app matches on it.
+const HealthBody = "clipbridge ok\n"
+
 func New(secret, slotsDir string) *Server {
 	s := &Server{
 		secret:   secret,
@@ -171,6 +174,14 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		http.NotFound(w, r)
+	})
+	// Unauthenticated liveness probe: lets the menu bar app check the public
+	// path end to end, and tells a tunnel pointed at the wrong port apart from
+	// one pointed at us. Reveals nothing beyond "a Clipbridge lives here".
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		io.WriteString(w, HealthBody)
 	})
 	mux.HandleFunc("/register", s.auth(s.handleRegister))
 	mux.HandleFunc("/machines", s.auth(s.handleMachines))

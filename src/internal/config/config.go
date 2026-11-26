@@ -94,3 +94,6 @@ func baseDir() (string, error) {
 	dir := filepath.Join(home, ".clipbridge")
 	return dir, os.MkdirAll(dir, 0700)
 }
+
+// Path is the location of config.json, for the menu bar's "Edit" item.
+func Path() (string, error) { return configPath() }
