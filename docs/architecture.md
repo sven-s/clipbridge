@@ -56,6 +56,8 @@ A slot is a pair of files on disk:
 
 The `.meta` file is what `/poll/<dir>` returns; the `.data` file is what `/receive/<dir>` streams.
 
+`from-NAME` is a **queue**, not a single slot: consecutive sends from a browser all wait for the Mac instead of overwriting each other. Each item is `slots/from-NAME/<id>.data` + `<id>.meta`, where `<id>` is zero-padded nanoseconds, so file-name order is FIFO. Writes land in a `.incoming-*` scratch file and are committed by rename. "Receive" in the menu drains the queue oldest-first: files are copied to Downloads one by one, texts are joined with newlines onto the clipboard; on an error it stops and leaves the rest queued. `/poll` and `/receive` on a `from-` dir see the oldest item; `/clear` drops the whole queue. A pre-queue flat `from-NAME.data` is migrated into the queue on startup.
+
 ## HTTP endpoints
 
 | Method | Path             | Auth | Purpose                                          |

@@ -30,6 +30,8 @@ type Server struct {
 	machDirty   bool
 	machFlushed time.Time
 	uploads     *uploadManager
+	queues      map[string][]QueueItem // from- dirs only; see queue.go
+	lastSeq     int64
 }
 
 // machineTTL is how long a browser stays listed after its last request.
@@ -46,6 +48,7 @@ func New(secret, slotsDir string) *Server {
 		secret:   secret,
 		slotsDir: slotsDir,
 		meta:     make(map[string]*SlotMeta),
+		queues:   make(map[string][]QueueItem),
 		machines: make(map[string]time.Time),
 		// Staging sits beside the slots so finishing a single-file upload is a
 		// rename, not a copy of the whole payload.
@@ -74,17 +77,36 @@ func (s *Server) restoreSlots() {
 	if err != nil {
 		return
 	}
+	legacy := make(map[string]SlotMeta)
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".meta") {
-			dir := strings.TrimSuffix(e.Name(), ".meta")
-			data, err := os.ReadFile(filepath.Join(s.slotsDir, e.Name()))
-			if err == nil {
-				var m SlotMeta
-				if json.Unmarshal(data, &m) == nil {
-					s.meta[dir] = &m
-				}
+		name := e.Name()
+		switch {
+		case strings.HasPrefix(name, incomingPrefix):
+			// A request that died mid-write.
+			os.Remove(filepath.Join(s.slotsDir, name))
+		case e.IsDir():
+			if validDir(name) && isQueueDir(name) {
+				s.loadQueue(name)
+			}
+		case strings.HasSuffix(name, ".meta"):
+			dir := strings.TrimSuffix(name, ".meta")
+			data, err := os.ReadFile(filepath.Join(s.slotsDir, name))
+			if err != nil {
+				continue
+			}
+			var m SlotMeta
+			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			if isQueueDir(dir) {
+				legacy[dir] = m
+			} else {
+				s.meta[dir] = &m
 			}
 		}
+	}
+	for dir, m := range legacy {
+		s.migrateLegacy(dir, m)
 	}
 }
 
@@ -216,7 +238,16 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slotBase := filepath.Join(s.slotsDir, dir)
+	// Everything lands in a scratch file first and is committed at the end, so a
+	// failed request never clobbers the slot or leaves a half item in a queue.
+	dst, err := s.newIncoming()
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	tmp := dst.Name()
+	defer os.Remove(tmp) // no-op once committed
+	defer dst.Close()
 	ct := r.Header.Get("Content-Type")
 	var meta SlotMeta
 
@@ -236,17 +267,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "bad multipart", http.StatusBadRequest)
 				return
 			}
-			meta = SlotMeta{Type: "file", Filename: part.FileName()}
-			dst, err := os.Create(slotBase + ".data")
-			if err != nil {
-				http.Error(w, "storage error", http.StatusInternalServerError)
-				return
-			}
+			meta = SlotMeta{Type: "file", Filename: safeName(part.FileName())}
 			buf := make([]byte, 1<<20)
 			n, err := io.CopyBuffer(dst, part, buf)
-			dst.Close()
 			if err != nil {
-				os.Remove(slotBase + ".data")
 				http.Error(w, "write error", http.StatusInternalServerError)
 				return
 			}
@@ -257,12 +281,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			if zipName == "" {
 				zipName = fmt.Sprintf("files-%d.zip", time.Now().Unix())
 			}
-			meta = SlotMeta{Type: "file", Filename: zipName}
-			dst, err := os.Create(slotBase + ".data")
-			if err != nil {
-				http.Error(w, "storage error", http.StatusInternalServerError)
-				return
-			}
+			meta = SlotMeta{Type: "file", Filename: safeName(zipName)}
 			zw := zip.NewWriter(dst)
 			buf := make([]byte, 1<<20)
 			for {
@@ -272,31 +291,26 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 				}
 				if err != nil {
 					zw.Close()
-					dst.Close()
-					os.Remove(slotBase + ".data")
 					http.Error(w, "multipart error", http.StatusBadRequest)
 					return
 				}
 				fw, err := zw.Create(part.FileName())
 				if err != nil {
 					zw.Close()
-					dst.Close()
-					os.Remove(slotBase + ".data")
 					http.Error(w, "zip create error", http.StatusInternalServerError)
 					return
 				}
 				if _, err := io.CopyBuffer(fw, part, buf); err != nil {
 					zw.Close()
-					dst.Close()
-					os.Remove(slotBase + ".data")
 					http.Error(w, "zip write error", http.StatusInternalServerError)
 					return
 				}
 			}
-			zw.Close()
-			dst.Close()
-			fi, _ := os.Stat(slotBase + ".data")
-			if fi != nil {
+			if err := zw.Close(); err != nil {
+				http.Error(w, "zip write error", http.StatusInternalServerError)
+				return
+			}
+			if fi, err := dst.Stat(); err == nil {
 				meta.Size = fi.Size()
 			}
 		}
@@ -307,17 +321,20 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		meta = SlotMeta{Type: "text", Size: int64(len(body))}
-		if err := os.WriteFile(slotBase+".data", body, 0600); err != nil {
+		if _, err := dst.Write(body); err != nil {
 			http.Error(w, "storage error", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	metaBytes, _ := json.Marshal(meta)
-	os.WriteFile(slotBase+".meta", metaBytes, 0600)
-	s.mu.Lock()
-	s.meta[dir] = &meta
-	s.mu.Unlock()
+	if err := dst.Close(); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.commit(dir, tmp, meta); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -327,9 +344,7 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid direction", http.StatusBadRequest)
 		return
 	}
-	s.mu.RLock()
-	meta := s.meta[dir]
-	s.mu.RUnlock()
+	meta := s.PeekMeta(dir)
 	if meta == nil {
 		http.NotFound(w, r)
 		return
@@ -344,15 +359,12 @@ func (s *Server) handleReceive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid direction", http.StatusBadRequest)
 		return
 	}
-	slotBase := filepath.Join(s.slotsDir, dir)
-	metaData, err := os.ReadFile(slotBase + ".meta")
-	if err != nil {
+	dataPath, meta := s.head(dir)
+	if meta == nil {
 		http.NotFound(w, r)
 		return
 	}
-	var meta SlotMeta
-	json.Unmarshal(metaData, &meta)
-	f, err := os.Open(slotBase + ".data")
+	f, err := os.Open(dataPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -390,15 +402,10 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 
 // --- Direct access methods used by the Mac app ---
 
+// PeekMeta returns the to- slot's meta, or the oldest item's for a from- queue.
 func (s *Server) PeekMeta(dir string) *SlotMeta {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.meta[dir]
-}
-
-func (s *Server) ReadText(dir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(s.slotsDir, dir+".data"))
-	return string(data), err
+	_, m := s.head(dir)
+	return m
 }
 
 func (s *Server) PutText(dir, text string) error {
@@ -494,39 +501,15 @@ func (s *Server) PutFile(dir, srcPath string) error {
 	return nil
 }
 
-func (s *Server) CopyFile(dir, destDir string) (string, error) {
-	meta := s.PeekMeta(dir)
-	if meta == nil {
-		return "", fmt.Errorf("no item in slot %s", dir)
-	}
-	src := filepath.Join(s.slotsDir, dir+".data")
-	destPath := filepath.Join(destDir, meta.Filename)
-	if _, err := os.Stat(destPath); err == nil {
-		ext := filepath.Ext(meta.Filename)
-		base := meta.Filename[:len(meta.Filename)-len(ext)]
-		for i := 1; ; i++ {
-			candidate := filepath.Join(destDir, fmt.Sprintf("%s (%d)%s", base, i, ext))
-			if _, err := os.Stat(candidate); os.IsNotExist(err) {
-				destPath = candidate
-				break
-			}
-		}
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return "", err
-	}
-	defer in.Close()
-	out, err := os.Create(destPath)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return destPath, err
-}
-
+// ClearSlot empties a to- slot, or drops a from- queue entirely.
 func (s *Server) ClearSlot(dir string) {
+	if isQueueDir(dir) {
+		s.mu.Lock()
+		delete(s.queues, dir)
+		s.mu.Unlock()
+		os.RemoveAll(filepath.Join(s.slotsDir, dir))
+		return
+	}
 	slotBase := filepath.Join(s.slotsDir, dir)
 	os.Remove(slotBase + ".data")
 	os.Remove(slotBase + ".meta")

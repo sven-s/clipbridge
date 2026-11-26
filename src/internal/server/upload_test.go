@@ -119,7 +119,7 @@ func TestChunkedUploadRoundTrip(t *testing.T) {
 		t.Fatalf("meta = %+v, want big.bin/%d", meta, len(data))
 	}
 
-	got, err := os.ReadFile(filepath.Join(s.slotsDir, "from-TESTPC.data"))
+	got, err := os.ReadFile(headData(t, s, "from-TESTPC"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestChunkRetryIsIdempotent(t *testing.T) {
 		t.Fatalf("complete: status %d: %s", resp.StatusCode, b)
 	}
 
-	got, err := os.ReadFile(filepath.Join(s.slotsDir, "from-TESTPC.data"))
+	got, err := os.ReadFile(headData(t, s, "from-TESTPC"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestMultiFileUploadZips(t *testing.T) {
 		t.Fatalf("meta = %+v, want bundle.zip", meta)
 	}
 
-	zr, err := zip.OpenReader(filepath.Join(s.slotsDir, "from-TESTPC.data"))
+	zr, err := zip.OpenReader(headData(t, s, "from-TESTPC"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,5 +312,100 @@ func TestSlotHandlersRejectTraversal(t *testing.T) {
 		if resp.StatusCode == http.StatusOK {
 			t.Fatalf("%s returned 200; traversal not blocked", path)
 		}
+	}
+}
+
+// headData returns the on-disk path of the oldest item in a from- queue.
+func headData(t *testing.T, s *Server, dir string) string {
+	t.Helper()
+	path, meta := s.head(dir)
+	if meta == nil {
+		t.Fatalf("%s: queue empty", dir)
+	}
+	return path
+}
+
+func uploadOne(t *testing.T, base, dir, name string, data []byte) {
+	t.Helper()
+	id, _ := initUpload(t, base, dir, []UploadFile{{Name: name, Size: int64(len(data))}}, "")
+	pushChunks(t, base, id, 0, data, 1024)
+	resp := completeUpload(t, base, id)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("complete %s: status %d", name, resp.StatusCode)
+	}
+}
+
+// TestFromQueueKeepsEveryItem is the reason the queue exists: consecutive sends
+// from a browser must all reach the Mac, oldest first, not just the last one.
+func TestFromQueueKeepsEveryItem(t *testing.T) {
+	s, ts := newTestServer(t)
+
+	uploadOne(t, ts.URL, "from-TESTPC", "a.txt", []byte("aaa"))
+	resp := do(t, http.MethodPost, ts.URL+"/send/from-TESTPC", bytes.NewReader([]byte("hello")), "text/plain")
+	resp.Body.Close()
+	uploadOne(t, ts.URL, "from-TESTPC", "b.txt", []byte("bbbb"))
+
+	items := s.Pending("from-TESTPC")
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+	if items[0].Meta.Filename != "a.txt" || items[1].Meta.Type != "text" || items[2].Meta.Filename != "b.txt" {
+		t.Fatalf("wrong order: %+v", items)
+	}
+
+	dest := t.TempDir()
+	p, err := s.CopyItem("from-TESTPC", items[0], dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(p); string(got) != "aaa" {
+		t.Fatalf("copied %q", got)
+	}
+	if txt, _ := s.ReadItemText("from-TESTPC", items[1].ID); txt != "hello" {
+		t.Fatalf("text = %q", txt)
+	}
+	s.RemoveItem("from-TESTPC", items[0].ID)
+	if m := s.PeekMeta("from-TESTPC"); m == nil || m.Type != "text" {
+		t.Fatalf("head after remove = %+v", m)
+	}
+
+	// A restart must see the same queue.
+	s2 := New(testSecret, s.slotsDir)
+	if got := s2.Pending("from-TESTPC"); len(got) != 2 || got[0].ID != items[1].ID || got[1].ID != items[2].ID {
+		t.Fatalf("after restart: %+v", got)
+	}
+}
+
+// TestToSlotStillOverwrites guards the other direction, which stays single-value.
+func TestToSlotStillOverwrites(t *testing.T) {
+	s, ts := newTestServer(t)
+	for _, body := range []string{"one", "two"} {
+		resp := do(t, http.MethodPost, ts.URL+"/send/to-TESTPC", bytes.NewReader([]byte(body)), "text/plain")
+		resp.Body.Close()
+	}
+	got, _ := os.ReadFile(filepath.Join(s.slotsDir, "to-TESTPC.data"))
+	if string(got) != "two" {
+		t.Fatalf("to- slot = %q, want two", got)
+	}
+}
+
+// TestLegacyFromSlotMigrates covers upgrading with an item still waiting in the
+// pre-queue flat layout.
+func TestLegacyFromSlotMigrates(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "from-OLD.data"), []byte("legacy"), 0600)
+	os.WriteFile(filepath.Join(dir, "from-OLD.meta"), []byte(`{"type":"file","filename":"x.bin","size":6}`), 0600)
+
+	s := New(testSecret, dir)
+	items := s.Pending("from-OLD")
+	if len(items) != 1 || items[0].Meta.Filename != "x.bin" {
+		t.Fatalf("items = %+v", items)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "from-OLD.meta")); !os.IsNotExist(err) {
+		t.Fatal("legacy meta not removed")
+	}
+	if got, _ := os.ReadFile(headData(t, s, "from-OLD")); string(got) != "legacy" {
+		t.Fatalf("data = %q", got)
 	}
 }

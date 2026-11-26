@@ -40,11 +40,12 @@ docs/                        # architecture.md, security.md
 
 - Module path: `clipbridge` (go.mod at root); imports look like `clipbridge/src/internal/...`
 - Mac-only at the host. `//go:build darwin` on platform-specific files.
-- The Mac process talks to its OWN server via direct method calls on the `*Server` struct (`PutText`, `PutFile`, `PutZip`, `ReadText`, `CopyFile`, `ClearSlot`, `PeekMeta`, `GetMachines`). NOT via HTTP. HTTP is only for the browsers.
+- The Mac process talks to its OWN server via direct method calls on the `*Server` struct (`PutText`, `PutFile`, `PutZip`, `Pending`, `ReadItemText`, `CopyItem`, `RemoveItem`, `ClearSlot`, `PeekMeta`, `GetMachines`). NOT via HTTP. HTTP is only for the browsers.
 - All API requests need `Authorization: Bearer <secret>`. `/receive` also accepts `?auth=` so browsers can use plain `<a download>`.
 - Streaming everywhere: `http.ServeContent` for downloads (Range support), `MultipartReader` for uploads, 1 MiB `io.CopyBuffer` buffers. No `ioutil.ReadAll` on file paths.
 - Multi-file uploads: client sets `X-File-Count` header. Count > 1 → server zips parts directly into the slot file. Client can set `X-Zip-Filename` to control the resulting filename. (This is the legacy single-shot `/send/` path — the web UI now uses `/upload/*` for all files.)
 - Chunked uploads (`/upload/init` → `/upload/chunk/<id>/<idx>?offset=N` → `/upload/complete/<id>`) address writes by **byte offset**, never sequence number. That is what makes a retried chunk idempotent — don't "optimise" it into an append.
+- `from-NAME` is a FIFO queue (`slots/from-NAME/<id>.data|.meta`), `to-NAME` a single overwrite slot. All browser writes go through `commit()` in `queue.go` (scratch file → rename). Menu "Receive" drains the whole queue.
 - Slot names from the URL must go through `validDir()`. A bare `strings.HasPrefix(dir, "to-")` check passes `to-../../x` and escapes the slots directory.
 - Menu bar machine slots are pre-allocated (5 max). `fyne.io/systray` can't remove items, only show/hide.
 - Sorting: `GetMachines()` returns alphabetical order — map iteration would otherwise flip the menu around on every poll.

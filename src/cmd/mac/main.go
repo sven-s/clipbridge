@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clipbridge/src/internal/clip"
@@ -291,11 +292,17 @@ func pollMachines() {
 				slots[i].mSendFile.Show()
 
 				// Check if this machine has sent something
-				fromDir := "from-" + name
-				meta := srv.PeekMeta(fromDir)
-				if meta != nil {
+				items := srv.Pending("from-" + name)
+				if len(items) > 0 {
 					label := ""
-					if meta.Type == "file" {
+					meta := items[0].Meta
+					if len(items) > 1 {
+						var total int64
+						for _, it := range items {
+							total += it.Meta.Size
+						}
+						label = fmt.Sprintf("Receive %d items from %s (%.1f MB)", len(items), name, float64(total)/1e6)
+					} else if meta.Type == "file" {
 						label = fmt.Sprintf("Receive from %s: %s (%.1f MB)", name, meta.Filename, float64(meta.Size)/1e6)
 					} else {
 						label = fmt.Sprintf("Receive from %s: text (%d B)", name, meta.Size)
@@ -319,7 +326,7 @@ func pollMachines() {
 		// Show dot if any machine has something waiting
 		anyWaiting := false
 		for _, m := range machines {
-			if srv.PeekMeta("from-"+m) != nil {
+			if len(srv.Pending("from-"+m)) > 0 {
 				anyWaiting = true
 				break
 			}
@@ -370,32 +377,82 @@ func doSendFile(machineName string) {
 	setStatus(fmt.Sprintf("%d files sent as zip to %s ✓", len(paths), machineName))
 }
 
+// receiving serialises doReceive: a second click while a large queue is still
+// copying would otherwise grab the same items.
+var receiving sync.Mutex
+
+// doReceive drains the machine's queue oldest-first: files go to Downloads one
+// by one, texts are joined onto the clipboard. Items that arrive mid-run wait
+// for the next click. On error it stops and leaves the failed item and the rest
+// queued.
 func doReceive(s *machineSlot) {
-	fromDir := "from-" + s.name
-	meta := srv.PeekMeta(fromDir)
-	if meta == nil {
-		setStatus("Nothing to receive from " + s.name)
+	name := s.name
+	fromDir := "from-" + name
+	if !receiving.TryLock() {
+		setStatus("Receive already running…")
 		return
 	}
-	if meta.Type == "text" {
-		text, err := srv.ReadText(fromDir)
-		if err != nil {
-			setStatus("Error: " + err.Error())
-			return
-		}
-		clip.WriteText(text)
-		srv.ClearSlot(fromDir)
-		setStatus("Text from " + s.name + " → clipboard ✓")
-	} else {
-		path, err := srv.CopyFile(fromDir, downloadsDir())
-		if err != nil {
-			setStatus("Error: " + err.Error())
-			return
-		}
-		srv.ClearSlot(fromDir)
-		exec.Command("open", "-R", path).Start()
-		setStatus("File from " + s.name + " → Downloads ✓")
+	defer receiving.Unlock()
+
+	items := srv.Pending(fromDir)
+	if len(items) == 0 {
+		setStatus("Nothing to receive from " + name)
+		return
 	}
+
+	var texts, files []string
+	var failure string
+	for i, it := range items {
+		prefix := ""
+		if len(items) > 1 {
+			prefix = fmt.Sprintf("%d/%d: ", i+1, len(items))
+		}
+		if it.Meta.Type == "text" {
+			text, err := srv.ReadItemText(fromDir, it.ID)
+			if err != nil {
+				failure = "Error: " + err.Error()
+				break
+			}
+			texts = append(texts, text)
+		} else {
+			setStatus(prefix + "Receiving " + it.Meta.Filename + "…")
+			path, err := srv.CopyItem(fromDir, it, downloadsDir())
+			if err != nil {
+				failure = fmt.Sprintf("Error on %s: %v", it.Meta.Filename, err)
+				break
+			}
+			files = append(files, path)
+		}
+		srv.RemoveItem(fromDir, it.ID)
+	}
+
+	if len(texts) > 0 {
+		clip.WriteText(strings.Join(texts, "\n"))
+	}
+	if len(files) > 0 {
+		// One Finder window, not one per file.
+		exec.Command("open", "-R", files[len(files)-1]).Start()
+	}
+	if failure != "" {
+		setStatus(failure)
+		return
+	}
+	var parts []string
+	switch len(files) {
+	case 0:
+	case 1:
+		parts = append(parts, "file → Downloads")
+	default:
+		parts = append(parts, fmt.Sprintf("%d files → Downloads", len(files)))
+	}
+	switch len(texts) {
+	case 0:
+	case 1:
+		parts = append(parts, "text → clipboard")
+	default:
+		parts = append(parts, fmt.Sprintf("%d texts → clipboard", len(texts)))
+	}
+	setStatus("From " + name + ": " + strings.Join(parts, ", ") + " ✓")
 }
 
 func setStatus(msg string) { mStatus.SetTitle(msg) }

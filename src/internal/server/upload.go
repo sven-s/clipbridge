@@ -299,30 +299,26 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request, id
 		}
 	}
 
-	slotBase := filepath.Join(s.slotsDir, sess.dir)
+	var src string
 	var meta SlotMeta
 
 	if len(sess.files) == 1 {
 		// The staging part is already the finished file, and staging lives under
-		// the same directory tree as the slots, so this is a rename rather than
+		// the same directory tree as the slots, so commit is a rename rather than
 		// a second full copy of a potentially multi-GB file.
-		partPath := filepath.Join(s.uploads.sessionDir(id), "0.part")
-		if err := os.Rename(partPath, slotBase+".data"); err != nil {
-			http.Error(w, "storage error", http.StatusInternalServerError)
-			return
-		}
+		src = filepath.Join(s.uploads.sessionDir(id), "0.part")
 		meta = SlotMeta{Type: "file", Filename: safeName(sess.files[0].Name), Size: sess.files[0].Size}
 	} else {
 		zipName := sess.zipName
 		if zipName == "" {
 			zipName = fmt.Sprintf("files-%d.zip", time.Now().Unix())
 		}
-		if err := s.zipParts(sess, slotBase+".data"); err != nil {
-			os.Remove(slotBase + ".data")
+		src = filepath.Join(s.uploads.sessionDir(id), "bundle.zip")
+		if err := s.zipParts(sess, src); err != nil {
 			http.Error(w, "zip error", http.StatusInternalServerError)
 			return
 		}
-		fi, err := os.Stat(slotBase + ".data")
+		fi, err := os.Stat(src)
 		if err != nil {
 			http.Error(w, "storage error", http.StatusInternalServerError)
 			return
@@ -330,14 +326,10 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request, id
 		meta = SlotMeta{Type: "file", Filename: safeName(zipName), Size: fi.Size()}
 	}
 
-	metaBytes, _ := json.Marshal(meta)
-	if err := os.WriteFile(slotBase+".meta", metaBytes, 0600); err != nil {
+	if err := s.commit(sess.dir, src, meta); err != nil {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
-	s.mu.Lock()
-	s.meta[sess.dir] = &meta
-	s.mu.Unlock()
 
 	s.uploads.drop(id)
 	w.WriteHeader(http.StatusNoContent)
