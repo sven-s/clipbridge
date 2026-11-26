@@ -61,6 +61,8 @@ docs/                        # architecture.md, security.md
 make tag VERSION=x.y.z     # tags and pushes → triggers .github/workflows/release.yml
 ```
 
+Add a `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md` first — the workflow copies it into the GitHub Release body (warns, doesn't fail, if missing).
+
 The release workflow:
 1. Builds universal DMG
 2. Attaches `Clipbridge-vX.Y.Z.dmg` to a new GitHub Release
